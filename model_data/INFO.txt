@@ -1,0 +1,4 @@
+Following files are from origianl repository:
+coco_classes.txt  tiny_yolo_anchors.txt  voc_classes.txt  yolo_anchors.txt
+
+And other files are created by running codes
