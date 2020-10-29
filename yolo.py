@@ -20,14 +20,14 @@ from keras.utils import multi_gpu_model
 
 class YOLO(object):
     _defaults = {
-        "model_path": 'model_data/yolo.h5',
+        "model_path": 'logs/002/trained_weights_transfer_1.h5',
         "anchors_path": 'model_data/yolo_anchors.txt',
-        "classes_path": 'model_data/coco_classes.txt',
+        "classes_path": 'model_data/yolo_classes.txt',
         "score" : 0.3,
         "iou" : 0.45,
-        "model_image_size" : (416, 416),
+        "model_image_size" : (416, 416),#(224,224),
         "gpu_num" : 1,
-        "ten_objects" : [0, 1, 2, 3, 5, 7, 9, 10, 11, 12] 
+        "ten_objects" : [0] #[0, 1, 2, 3, 5, 7, 9, 10, 11, 12] 
     }
 
     @classmethod
@@ -44,6 +44,7 @@ class YOLO(object):
         self.anchors = self._get_anchors()
         self.sess = K.get_session()
         self.boxes, self.scores, self.classes = self.generate()
+#         self.image_name = os.path.expanduser(self.image_name) #shjeong added
 
     def _get_class(self):
         classes_path = os.path.expanduser(self.classes_path)
@@ -101,7 +102,7 @@ class YOLO(object):
                 score_threshold=self.score, iou_threshold=self.iou)
         return boxes, scores, classes
 
-    def detect_image(self, image):
+    def detect_image(self, image, imgname):
 
         # print("type of image input: ", type(image))    # <class 'PIL.JpegImagePlugin.JpegImageFile'>
 
@@ -140,11 +141,10 @@ class YOLO(object):
             # deal with only ten objects (as defined in self.ten_objects)
             if c not in self.ten_objects:
                 continue
-
             predicted_class = self.class_names[c]
             box = out_boxes[i]
             score = out_scores[i]
-
+            
             label = '{} {:.2f}'.format(predicted_class, score)
             draw = ImageDraw.Draw(image)
             label_size = draw.textsize(label, font)
@@ -154,33 +154,38 @@ class YOLO(object):
             left = max(0, np.floor(left + 0.5).astype('int32'))
             bottom = min(image.size[1], np.floor(bottom + 0.5).astype('int32'))
             right = min(image.size[0], np.floor(right + 0.5).astype('int32'))
-            print(label, (left, top), (right, bottom))    
-
+            print(label, (left, top), (right, bottom))   
+            
+            f1 = open("/home/shjeong/yolo-codes-keras/mAP/input/detection-results/"+imgname+".txt", "a")
+            f1.write(predicted_class+' '+str(score)+' '+str(left)+' '+str(top)+' '+str(right)+' '+str(bottom)+"\n")
+            f1.close()
+            
             if top - label_size[1] >= 0:
                 text_origin = np.array([left, top - label_size[1]])
             else:
                 text_origin = np.array([left, top + 1])
 
-            # My kingdom for a good redistributable image drawing library.
-            for i in range(thickness):
-                draw.rectangle(
-                    [left + i, top + i, right - i, bottom - i],
-                    outline=self.colors[c])
-            draw.rectangle(
-                [tuple(text_origin), tuple(text_origin + label_size)],
-                fill=self.colors[c])
-            draw.text(text_origin, label, fill=(0, 0, 0), font=font)
-            del draw
+#             # My kingdom for a good redistributable image drawing library.
+#             for i in range(thickness):
+#                 draw.rectangle(
+#                     [left + i, top + i, right - i, bottom - i],
+#                     outline=self.colors[c])
+#             draw.rectangle(
+#                 [tuple(text_origin), tuple(text_origin + label_size)],
+#                 fill=self.colors[c])
+#             draw.text(text_origin, label, fill=(0, 0, 0), font=font)
+#             del draw
 
         end = timer()
-        print(end - start)
+        print('inference time ',end - start)
         
         # print("type of return image type: ", type(image))   # <class 'PIL.JpegImagePlugin.JpegImageFile'>
 
         #print("shape: ", image.shape)
 
-        # save image for debugging
-        image.save("test.jpg")
+#         # save image for debugging
+#         if len(out_boxes)>0:
+#             image.save('/home/shjeong/yolo-codes-keras/inference_result/000/'+imgname)
 
         return image
 

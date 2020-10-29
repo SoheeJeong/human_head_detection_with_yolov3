@@ -1,0 +1,6 @@
+0 float
+1   hyperopt_param
+2     Literal{lr}
+3     uniform
+4       Literal{0.0001}
+5       Literal{0.01}

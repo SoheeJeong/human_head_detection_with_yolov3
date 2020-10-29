@@ -1,8 +1,9 @@
 """
 Retrain the YOLO model for your own dataset.
 """
-
+import random
 import numpy as np
+import tensorflow as tf
 import keras.backend as K
 from keras.layers import Input, Lambda
 from keras.models import Model
@@ -15,8 +16,9 @@ from yolo3.utils import get_random_data
 
 def _main():
     annotation_path = 'train.txt'
-    log_dir = 'logs/000/'
-    classes_path = 'model_data/voc_classes.txt'
+    val_annotation_path = 'val.txt'
+    log_dir = 'logs/005/'
+    classes_path = 'model_data/yolo_classes.txt'
     anchors_path = 'model_data/yolo_anchors.txt'
     class_names = get_classes(classes_path)
     num_classes = len(class_names)
@@ -30,7 +32,7 @@ def _main():
             freeze_body=2, weights_path='model_data/tiny_yolo_weights.h5')
     else:
         model = create_model(input_shape, anchors, num_classes,
-            freeze_body=2, weights_path='model_data/yolo_weights.h5') # make sure you know what you freeze
+            freeze_body=2, weights_path='model_data/yolo_face_weights.h5') #max_batches=4000 version
 
     logging = TensorBoard(log_dir=log_dir)
     checkpoint = ModelCheckpoint(log_dir + 'ep{epoch:03d}-loss{loss:.3f}-val_loss{val_loss:.3f}.h5',
@@ -38,54 +40,91 @@ def _main():
     reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=3, verbose=1)
     early_stopping = EarlyStopping(monitor='val_loss', min_delta=0, patience=10, verbose=1)
 
-    val_split = 0.1
+#     val_split = 0.1
     with open(annotation_path) as f:
         lines = f.readlines()
-    np.random.seed(10101)
+    with open(val_annotation_path) as f2:
+        lines_val = f2.readlines()
+
+    #choose random image sample 
+#     np.random.seed(10101)
+    np.random.seed(12345)
     np.random.shuffle(lines)
     np.random.seed(None)
-    num_val = int(len(lines)*val_split)
-    num_train = len(lines) - num_val
-
+    div_param = 10
+    num_train,num_val,train_data,val_data = dataset_creator(lines,lines_val,div_param) 
+    
     # Train with frozen layers first, to get a stable loss.
     # Adjust num epochs to your dataset. This step is enough to obtain a not bad model.
     if True:
-        model.compile(optimizer=Adam(lr=1e-3), loss={
-            # use custom yolo_loss Lambda layer.
-            'yolo_loss': lambda y_true, y_pred: y_pred})
+        with tf.device('/gpu:0'):
+            model.compile(optimizer=Adam(lr=1e-3), loss={
+                # use custom yolo_loss Lambda layer.
+                'yolo_loss': lambda y_true, y_pred: y_pred})
 
-        batch_size = 32
-        print('Train on {} samples, val on {} samples, with batch size {}.'.format(num_train, num_val, batch_size))
-        model.fit_generator(data_generator_wrapper(lines[:num_train], batch_size, input_shape, anchors, num_classes),
-                steps_per_epoch=max(1, num_train//batch_size),
-                validation_data=data_generator_wrapper(lines[num_train:], batch_size, input_shape, anchors, num_classes),
-                validation_steps=max(1, num_val//batch_size),
-                epochs=50,
-                initial_epoch=0,
-                callbacks=[logging, checkpoint])
-        model.save_weights(log_dir + 'trained_weights_stage_1.h5')
-
+            batch_size = 32 #cfg에서 정의한거는?
+            print('Train on {} samples, val on {} samples, with batch size {}.'.format(num_train, num_val, batch_size))
+            model.fit_generator(data_generator_wrapper(train_data, batch_size, input_shape, anchors, num_classes),
+                    steps_per_epoch=max(1, num_train//batch_size),
+                    validation_data=data_generator_wrapper(val_data, batch_size, input_shape, anchors, num_classes),
+                    validation_steps=max(1, num_val//
+                                         batch_size),
+                    epochs=20,
+                    initial_epoch=0,
+                    callbacks=[logging, checkpoint])
+            model.save_weights(log_dir + 'trained_weights_transfer_1.h5') #중간 저장
+            
+#    #####################         
+#     #choose random image sample     
+#     np.random.seed(32145) 
+#     np.random.shuffle(lines)
+#     np.random.seed(None)
+#     div_param = 50
+#     num_train,num_val,train_data,val_data = dataset_creator(lines,lines_val,div_param) #choose random image sample 
+    
     # Unfreeze and continue training, to fine-tune.
     # Train longer if the result is not good.
     if True:
-        for i in range(len(model.layers)):
-            model.layers[i].trainable = True
-        model.compile(optimizer=Adam(lr=1e-4), loss={'yolo_loss': lambda y_true, y_pred: y_pred}) # recompile to apply the change
-        print('Unfreeze all of the layers.')
+        with tf.device('/gpu:0'):
+            model.compile(optimizer=Adam(lr=1e-4), loss={'yolo_loss': lambda y_true, y_pred: y_pred}) # recompile to apply the change
+            batch_size = 32 # note that more GPU memory is required after unfreezing the body
+            print('Train on {} samples, val on {} samples, with batch size {}.'.format(num_train, num_val, batch_size))
+            model.fit_generator(data_generator_wrapper(train_data, batch_size, input_shape, anchors, num_classes),
+                steps_per_epoch=max(1, num_train//batch_size),
+                validation_data=data_generator_wrapper(val_data, batch_size, input_shape, anchors, num_classes),
+                validation_steps=max(1, num_val//batch_size),
+                epochs=40,
+                initial_epoch=20,
+                callbacks=[logging, checkpoint, reduce_lr, early_stopping])
+            model.save_weights(log_dir + 'trained_weights_transfer_2.h5')
+            
+      # Train longer if the result is not good.
+    if True:
+        with tf.device('/gpu:0'):
+            model.compile(optimizer=Adam(lr=1e-5), loss={'yolo_loss': lambda y_true, y_pred: y_pred}) # recompile to apply the change
+            batch_size = 32 # note that more GPU memory is required after unfreezing the body
+            print('Train on {} samples, val on {} samples, with batch size {}.'.format(num_train, num_val, batch_size))
+            model.fit_generator(data_generator_wrapper(train_data, batch_size, input_shape, anchors, num_classes),
+                steps_per_epoch=max(1, num_train//batch_size),
+                validation_data=data_generator_wrapper(val_data, batch_size, input_shape, anchors, num_classes),
+                validation_steps=max(1, num_val//batch_size),
+                epochs=60,
+                initial_epoch=40,
+                callbacks=[logging, checkpoint, reduce_lr, early_stopping])
+            model.save_weights(log_dir + 'trained_weights_transfer_3.h5')
 
-        batch_size = 32 # note that more GPU memory is required after unfreezing the body
-        print('Train on {} samples, val on {} samples, with batch size {}.'.format(num_train, num_val, batch_size))
-        model.fit_generator(data_generator_wrapper(lines[:num_train], batch_size, input_shape, anchors, num_classes),
-            steps_per_epoch=max(1, num_train//batch_size),
-            validation_data=data_generator_wrapper(lines[num_train:], batch_size, input_shape, anchors, num_classes),
-            validation_steps=max(1, num_val//batch_size),
-            epochs=100,
-            initial_epoch=50,
-            callbacks=[logging, checkpoint, reduce_lr, early_stopping])
-        model.save_weights(log_dir + 'trained_weights_final.h5')
-
-    # Further training if needed.
-
+#     Further training if needed.
+def dataset_creator(lines,lines_val,div_param):
+    num_train = int(len(lines)/div_param)
+    num_val = int(len(lines_val)/10 ) #shjeong modified (너무 커서 나눠봄)
+    train_data, val_data = [],[]
+    for i in range(0,num_train): #일정 간격(div_param)으로  data 추출
+        train_data.append(lines[i])
+#     for i in random.sample(range(0,num_val),10):
+    for i in range(0,num_val):
+        val_data.append(lines_val[i])
+        
+    return num_train,num_val,train_data,val_data
 
 def get_classes(classes_path):
     '''loads the classes'''
@@ -103,7 +142,7 @@ def get_anchors(anchors_path):
 
 
 def create_model(input_shape, anchors, num_classes, load_pretrained=True, freeze_body=2,
-            weights_path='model_data/yolo_weights.h5'):
+            weights_path='model_data/yolo_face_weights.h5'):
     '''create the training model'''
     K.clear_session() # get a new session
     image_input = Input(shape=(None, None, 3))
@@ -120,9 +159,10 @@ def create_model(input_shape, anchors, num_classes, load_pretrained=True, freeze
         model_body.load_weights(weights_path, by_name=True, skip_mismatch=True)
         print('Load weights {}.'.format(weights_path))
         if freeze_body in [1, 2]:
-            # Freeze darknet53 body or freeze all but 3 output layers.
-            num = (185, len(model_body.layers)-3)[freeze_body-1]
-            for i in range(num): model_body.layers[i].trainable = False
+            # Freeze darknet53 body or freeze all but 3(12) output layers.
+            num = (185, len(model_body.layers)-12)[freeze_body-1]
+            for i in range(num): 
+                model_body.layers[i].trainable = False
             print('Freeze the first {} layers of total {} layers.'.format(num, len(model_body.layers)))
 
     model_loss = Lambda(yolo_loss, output_shape=(1,), name='yolo_loss',

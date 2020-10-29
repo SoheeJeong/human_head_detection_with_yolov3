@@ -1,0 +1,15 @@
+artifact_uri: file:///home/shjeong/yolo-codes-keras/mlruns/0/23dd810334e748279aa1aa5c538b5c87/artifacts
+end_time: 1603787087171
+entry_point_name: ''
+experiment_id: '0'
+lifecycle_stage: active
+name: ''
+run_id: 23dd810334e748279aa1aa5c538b5c87
+run_uuid: 23dd810334e748279aa1aa5c538b5c87
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1603787087145
+status: 4
+tags: []
+user_id: shjeong
